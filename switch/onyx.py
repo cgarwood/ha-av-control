@@ -9,7 +9,7 @@ from homeassistant.components.switch import SwitchDevice
 from homeassistant.util import Throttle
 from homeassistant.helpers.dispatcher import (
     async_dispatcher_send, async_dispatcher_connect)
-from ..onyx import OnyxController, SIGNAL_UPDATE_DATA
+from ..onyx import OnyxController, SIGNAL_UPDATE_DATA, ONYX_CONTROLLER
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -22,7 +22,7 @@ async def async_setup_platform(hass, config, async_add_devices, discovery_info=N
     if discovery_info is None:
         return
 
-    controller = discovery_info['controller']
+    controller = hass.data[ONYX_CONTROLLER]
 
     devices = [OnyxCueList(cl, controller)
                for cl in controller.cuelists]

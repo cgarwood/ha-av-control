@@ -26,6 +26,8 @@ READ_SIZE = 1024
 
 DOMAIN = 'onyx'
 
+ONYX_CONTROLLER = 'onyx_controller'
+
 CONFIG_SCHEMA = vol.Schema({
     DOMAIN: vol.Schema({
         vol.Required(CONF_HOST): cv.string,
@@ -52,12 +54,12 @@ async def async_setup(hass, config):
         _LOGGER.warning('Onyx Connection Timed Out')
         return False
 
+    hass.data[ONYX_CONTROLLER] = controller
     hass.async_add_job(
         discovery.async_load_platform(
             hass, 'switch', DOMAIN,
             {CONF_HOST: host,
              CONF_PORT: port,
-             'controller': controller
              }, config))
 
     async def async_update_data(now):
@@ -143,7 +145,6 @@ class OnyxController:
             else:
                 where = self._read_buffer.find(value)
                 if where != -1:
-                    # self._read_buffer = self._read_buffer[where + len(value):]
                     res = self._read_buffer
                     self._read_buffer = b""
                     return res
