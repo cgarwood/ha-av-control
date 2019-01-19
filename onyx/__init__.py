@@ -44,9 +44,13 @@ async def async_setup(hass, config):
     port = conf[CONF_PORT]
     interval = timedelta(seconds=2)
     controller = OnyxController(host, port)
-    await controller.open()
-    await controller.getCueLists()
-    await controller.getActiveCueLists()
+    try:
+        await asyncio.wait_for(controller.open(), timeout=3)
+        await asyncio.wait_for(controller.getCueLists(), timeout=3)
+        await asyncio.wait_for(controller.getActiveCueLists(), timeout=3)
+    except asyncio.TimeoutError:
+        _LOGGER.warning('Onyx Connection Timed Out')
+        return False
 
     hass.async_add_job(
         discovery.async_load_platform(
@@ -57,12 +61,14 @@ async def async_setup(hass, config):
              }, config))
 
     async def async_update_data(now):
-        """Update data from IP camera in SCAN_INTERVAL."""
-        await controller.getActiveCueLists()
-        async_dispatcher_send(hass, SIGNAL_UPDATE_DATA, host)
+        try:
+            await asyncio.wait_for(controller.getActiveCueLists(), timeout=3)
+            async_dispatcher_send(hass, SIGNAL_UPDATE_DATA, host)
 
-        async_track_point_in_utc_time(
-            hass, async_update_data, utcnow() + interval)
+            async_track_point_in_utc_time(
+                hass, async_update_data, utcnow() + interval)
+        except asyncio.TimeoutError:
+            _LOGGER.debug('Onyx Request Timed Out')
 
     await async_update_data(None)
 
@@ -105,16 +111,17 @@ class OnyxController:
 
                 # open connection
                 try:
-                    connection = yield from asyncio.open_connection(self._host, self._port,
-                                                                    loop=OnyxController.loop)
+                    fut = asyncio.open_connection(self._host, self._port,
+                                                  loop=OnyxController.loop)
+                    reader, writer = yield from asyncio.wait_for(fut, timeout=3)
                 except OSError as err:
                     _LOGGER.warning(
                         "Error opening connection to Onyx Controller: %s", err)
                     self._state = OnyxController.State.Closed
                     return
 
-                self.reader = connection[0]
-                self.writer = connection[1]
+                self.reader = reader
+                self.writer = writer
 
                 yield from self._read_until(b"200 \r\n")
 
@@ -138,7 +145,7 @@ class OnyxController:
             else:
                 where = self._read_buffer.find(value)
                 if where != -1:
-                    #self._read_buffer = self._read_buffer[where + len(value):]
+                    # self._read_buffer = self._read_buffer[where + len(value):]
                     res = self._read_buffer
                     self._read_buffer = b""
                     return res
