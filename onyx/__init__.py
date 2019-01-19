@@ -100,11 +100,10 @@ class OnyxController:
         """Returns if the connection is open."""
         return self._state == OnyxController.State.Opened
 
-    @asyncio.coroutine
-    def open(self):
+    async def open(self):
         """Open a Telnet connection to Onyx."""
-        with (yield from self._read_lock):
-            with (yield from self._write_lock):
+        with (await self._read_lock):
+            with (await self._write_lock):
                 if self._state != OnyxController.State.Closed:
                     return
                 self._state = OnyxController.State.Opening
@@ -113,7 +112,7 @@ class OnyxController:
                 try:
                     fut = asyncio.open_connection(self._host, self._port,
                                                   loop=OnyxController.loop)
-                    reader, writer = yield from asyncio.wait_for(fut, timeout=3)
+                    reader, writer = await asyncio.wait_for(fut, timeout=3)
                 except OSError as err:
                     _LOGGER.warning(
                         "Error opening connection to Onyx Controller: %s", err)
@@ -123,14 +122,13 @@ class OnyxController:
                 self.reader = reader
                 self.writer = writer
 
-                yield from self._read_until(b"200 \r\n")
+                await self._read_until(b"200 \r\n")
 
                 self._state = OnyxController.State.Opened
 
                 return True
 
-    @asyncio.coroutine
-    def _read_until(self, value):
+    async def _read_until(self, value):
         """Read until a given value is reached."""
         while True:
             if (self._read_buffer != b''):
@@ -150,19 +148,18 @@ class OnyxController:
                     self._read_buffer = b""
                     return res
             try:
-                self._read_buffer += yield from self.reader.read(READ_SIZE)
+                self._read_buffer += await self.reader.read(READ_SIZE)
             except OSError as err:
                 _LOGGER.warning(
                     "Error reading from Onyx Controller: %s", err)
                 return False
 
-    @asyncio.coroutine
-    def read(self):
+    async def read(self):
         """Return a list of values read from the Telnet interface."""
-        with (yield from self._read_lock):
+        with (await self._read_lock):
             if self._state != OnyxController.State.Opened:
                 return None
-            match = yield from self._read_until(b".\r\n")
+            match = await self._read_until(b".\r\n")
             if match is not False:
                 try:
                     return match
@@ -172,27 +169,25 @@ class OnyxController:
             # attempt to reconnect
             _LOGGER.info("Reconnecting to Onyx Controller %s", self._host)
             self._state = OnyxController.State.Closed
-            yield from self.open()
+            await self.open()
         return None
 
-    @asyncio.coroutine
-    def write(self, command):
+    async def write(self, command):
         """Write a list of values out to the Telnet interface."""
-        with (yield from self._write_lock):
+        with (await self._write_lock):
             if self._state != OnyxController.State.Opened:
                 return
             try:
-                _LOGGER.debug('> ' + command)
+                _LOGGER.debug('> Sent Command: ' + command)
                 self.writer.write((command + "\r\n").encode())
             except OSError as err:
                 _LOGGER.warning(
                     "Error writing out to the Onyx Controller: %s", err)
 
-    @asyncio.coroutine
-    def getCueLists(self):
+    async def getCueLists(self):
         """Request list of all available cuelists."""
-        yield from self.write('QLList')
-        result = yield from self.read()
+        await self.write('QLList')
+        result = await self.read()
         res = result.decode("utf-8").splitlines()
         cuelists = []
         for i in res:
@@ -204,11 +199,15 @@ class OnyxController:
         self.cuelists = cuelists
         return cuelists
 
-    @asyncio.coroutine
-    def getActiveCueLists(self):
+    async def getActiveCueLists(self):
         # Query for active cue lists
-        yield from self.write('QLActive')
-        result = yield from self.read()
+        try:
+            await asyncio.wait_for(self.write('QLActive'), timeout=3)
+        except asyncio.TimeoutError:
+            _LOGGER.warning('Get Active CueLists Timed Out')
+            return False
+
+        result = await self.read()
         res = result.decode("utf-8").splitlines()
         cuelists = []
         for i in res:
@@ -220,14 +219,12 @@ class OnyxController:
         self.active_lists = cuelists
         return cuelists
 
-    @asyncio.coroutine
-    def goCueList(self, cuelist):
-        yield from self.write('GQL {}'.format(cuelist))
-        res = yield from self.read()
+    async def goCueList(self, cuelist):
+        await self.write('GQL {}'.format(cuelist))
+        res = await self.read()
         return True
 
-    @asyncio.coroutine
-    def releaseCueList(self, cuelist):
-        yield from self.write('RQL {}'.format(cuelist))
-        res = yield from self.read()
+    async def releaseCueList(self, cuelist):
+        await self.write('RQL {}'.format(cuelist))
+        res = await self.read()
         return True
