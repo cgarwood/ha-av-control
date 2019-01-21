@@ -70,7 +70,7 @@ async def async_setup(hass, config):
             async_track_point_in_utc_time(
                 hass, async_update_data, utcnow() + interval)
         except asyncio.TimeoutError:
-            _LOGGER.debug('Onyx Request Timed Out')
+            _LOGGER.warning('Onyx Request Timed Out')
 
     await async_update_data(None)
 
@@ -115,7 +115,7 @@ class OnyxController:
                     fut = asyncio.open_connection(self._host, self._port,
                                                   loop=OnyxController.loop)
                     reader, writer = await asyncio.wait_for(fut, timeout=3)
-                except OSError as err:
+                except (OSError, asyncio.TimeoutError) as err:
                     _LOGGER.warning(
                         "Error opening connection to Onyx Controller: %s", err)
                     self._state = OnyxController.State.Closed
@@ -124,54 +124,24 @@ class OnyxController:
                 self.reader = reader
                 self.writer = writer
 
-                await self._read_until(b"200 \r\n")
+                await self.reader.readuntil(b"200 \r\n")
 
                 self._state = OnyxController.State.Opened
 
                 return True
 
-    async def _read_until(self, value):
-        """Read until a given value is reached."""
-        while True:
-            if (self._read_buffer != b''):
-                _LOGGER.debug(self._read_buffer)
-
-            if hasattr(value, "search"):
-                # assume regular expression
-                match = value.search(self._read_buffer)
-                if match:
-                    self._read_buffer = self._read_buffer[match.end():]
-                    return match
-            else:
-                where = self._read_buffer.find(value)
-                if where != -1:
-                    res = self._read_buffer
-                    self._read_buffer = b""
-                    return res
-            try:
-                self._read_buffer += await self.reader.read(READ_SIZE)
-            except OSError as err:
-                _LOGGER.warning(
-                    "Error reading from Onyx Controller: %s", err)
-                return False
-
     async def read(self):
         """Return a list of values read from the Telnet interface."""
         with (await self._read_lock):
-            if self._state != OnyxController.State.Opened:
-                return None
-            match = await self._read_until(b".\r\n")
-            if match is not False:
-                try:
-                    return match
-                except ValueError:
-                    print("Exception in ", match)
-        if match is False:
-            # attempt to reconnect
-            _LOGGER.info("Reconnecting to Onyx Controller %s", self._host)
-            self._state = OnyxController.State.Closed
-            await self.open()
-        return None
+            try:
+                result = await self.reader.readuntil(b".\r\n")
+                _LOGGER.debug('< %s', result)
+                return result
+            except asyncio.streams.IncompleteReadError:
+                _LOGGER.warning(
+                    'Failed to read from Onyx Controller. Attempting to reconnect...')
+                self._state = OnyxController.State.Closed
+                await self.open()
 
     async def write(self, command):
         """Write a list of values out to the Telnet interface."""
@@ -212,7 +182,7 @@ class OnyxController:
         res = result.decode("utf-8").splitlines()
         cuelists = []
         for i in res:
-            if (i != '200 Ok' and i != '.'):
+            if (i != '200 Ok' and i != '.' and i != 'No Active Qlist in List'):
                 cl = i.split(' - ')
                 cuelists.append(cl[0])
 
